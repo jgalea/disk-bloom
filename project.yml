@@ -1,0 +1,54 @@
+name: Bloom
+options:
+  bundleIdPrefix: com.jeangalea
+  deploymentTarget:
+    macOS: "14.0"
+  developmentLanguage: en
+settings:
+  base:
+    DEVELOPMENT_TEAM: V39FW47X6K
+    SWIFT_VERSION: 6.0
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "Developer ID Application"
+    SWIFT_STRICT_CONCURRENCY: complete
+targets:
+  Bloom:
+    type: application
+    platform: macOS
+    settings:
+      base:
+        PRODUCT_NAME: Disk Bloom
+    sources:
+      - path: Bloom
+    info:
+      path: Bloom/Info.plist
+      properties:
+        NSHumanReadableCopyright: "© 2026 Jean Galea"
+        CFBundleIconFile: AppIcon
+        CFBundleDisplayName: Disk Bloom
+        NSMainStoryboardFile: ""
+        NSPrincipalClass: NSApplication
+    entitlements:
+      path: Bloom/Bloom.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+    dependencies:
+      - package: BloomCore
+      - target: bloom-scan
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
+  bloom-scan:
+    type: tool
+    platform: macOS
+    sources:
+      - path: bloom-scan
+    dependencies:
+      - package: BloomCore
+packages:
+  BloomCore:
+    path: Packages/BloomCore
