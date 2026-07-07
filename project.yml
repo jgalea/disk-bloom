@@ -12,7 +12,7 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: "Developer ID Application"
+    CODE_SIGN_IDENTITY: "Apple Development"
     SWIFT_STRICT_CONCURRENCY: complete
 targets:
   Bloom:
@@ -23,6 +23,12 @@ targets:
         PRODUCT_NAME: Disk Bloom
     sources:
       - path: Bloom
+      - path: Shared
+      - path: daemon/com.jeangalea.bloom.helper.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchDaemons
     info:
       path: Bloom/Info.plist
       properties:
@@ -42,11 +48,24 @@ targets:
         codeSign: true
         copy:
           destination: executables
+      - target: bloom-helper
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
   bloom-scan:
     type: tool
     platform: macOS
     sources:
       - path: bloom-scan
+    dependencies:
+      - package: BloomCore
+  bloom-helper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: bloom-helper
+      - path: Shared
     dependencies:
       - package: BloomCore
 packages:

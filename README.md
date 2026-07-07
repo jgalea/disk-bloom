@@ -42,7 +42,7 @@ The app lands in `build/` (or your derived data path) as `Disk Bloom.app`. Engin
 
 ## Privileged scanning
 
-- "Scan as administrator" runs the embedded `bloom-scan` helper with admin privileges — one password prompt per scan. The helper scans with the same engine and hands the tree back through a serialized temp file.
+- "Scan as administrator" runs scans as root. Enable the background helper in the app's Settings (a one-time approval under System Settings → Login Items) and admin scans run through an SMAppService daemon over XPC with no password prompts; the daemon only accepts connections from binaries signed by the same team. Without the helper, the app falls back to a password prompt per scan.
 - For everyday scans, grant the app Full Disk Access (System Settings → Privacy & Security). That's what stops macOS's per-folder permission pop-ups; the welcome screen offers it when not granted.
 
 ## Debug flags

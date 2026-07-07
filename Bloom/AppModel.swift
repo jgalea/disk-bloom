@@ -52,8 +52,17 @@ final class AppModel {
 
     init() {
         refreshVolumes()
-        // Debug hook: `Bloom --autoscan <path>` jumps straight into a scan.
         let args = CommandLine.arguments
+        // Debug hook: `--helper-ctl <file>` registers the privileged helper
+        // and writes the resulting status, then exits.
+        if let index = args.firstIndex(of: "--helper-ctl"), args.count > index + 1 {
+            let message = HelperManager.shared.enable()
+            let status = HelperManager.shared.status
+            try? "status=\(status.rawValue) message=\(message ?? "ok")"
+                .write(toFile: args[index + 1], atomically: true, encoding: .utf8)
+            exit(0)
+        }
+        // Debug hook: `Bloom --autoscan <path>` jumps straight into a scan.
         if let index = args.firstIndex(of: "--autoscan"), args.count > index + 1 {
             scan(url: URL(fileURLWithPath: args[index + 1]))
         }
@@ -108,10 +117,84 @@ final class AppModel {
         }
     }
 
-    /// DaisyDisk-style admin scan: run the embedded bloom-scan helper with
-    /// administrator privileges (system password prompt), poll its progress
-    /// file, then load the serialized tree it wrote.
     private func scanAsAdministrator(url: URL) {
+        if HelperManager.shared.isActive {
+            scanViaDaemon(url: url)
+        } else {
+            scanViaPasswordPrompt(url: url)
+        }
+    }
+
+    /// Prompt-free admin scan through the approved bloom-helper daemon:
+    /// hand it a file descriptor over XPC, poll progress, load the tree.
+    private func scanViaDaemon(url: URL) {
+        phase = .scanning
+        progress = ScanSnapshot(items: 0, bytes: 0, skipped: 0)
+
+        let treeFile = NSTemporaryDirectory() + "bloom-daemon-\(UUID().uuidString).tree"
+        FileManager.default.createFile(atPath: treeFile, contents: nil)
+        guard let output = FileHandle(forWritingAtPath: treeFile) else {
+            errorMessage = "Couldn't create a temporary file for the scan."
+            phase = .welcome
+            return
+        }
+
+        nonisolated(unsafe) let connection = NSXPCConnection(machServiceName: BloomHelper.machServiceName, options: .privileged)
+        connection.remoteObjectInterface = NSXPCInterface(with: BloomHelperProtocol.self)
+        connection.resume()
+
+        let finish: @Sendable (String?) -> Void = { [weak self] errorDescription in
+            Task { @MainActor in
+                guard let self else { return }
+                defer {
+                    connection.invalidate()
+                    try? FileManager.default.removeItem(atPath: treeFile)
+                }
+                if let errorDescription {
+                    self.errorMessage = "Administrator scan failed: \(errorDescription)"
+                    self.phase = .welcome
+                    return
+                }
+                do {
+                    let (tree, skipped) = try TreeSerializer.read(from: URL(fileURLWithPath: treeFile))
+                    self.finishScan(tree: tree, skipped: skipped)
+                } catch {
+                    self.errorMessage = "Couldn't load the scan result: \(error.localizedDescription)"
+                    self.phase = .welcome
+                }
+            }
+        }
+
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            finish(error.localizedDescription)
+        }) as? BloomHelperProtocol else {
+            errorMessage = "Couldn't talk to the background helper."
+            phase = .welcome
+            connection.invalidate()
+            return
+        }
+
+        Task { [weak self] in
+            while self?.phase == .scanning {
+                proxy.progress { items, bytes, skipped in
+                    Task { @MainActor [weak self] in
+                        if self?.phase == .scanning {
+                            self?.progress = ScanSnapshot(items: items, bytes: bytes, skipped: skipped)
+                        }
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+
+        proxy.startScan(path: url.path, output: output, reply: finish)
+        try? output.close()
+    }
+
+    /// DaisyDisk-style admin scan fallback: run the embedded bloom-scan tool
+    /// with administrator privileges (system password prompt), poll its
+    /// progress file, then load the serialized tree it wrote.
+    private func scanViaPasswordPrompt(url: URL) {
         guard let helper = Bundle.main.url(forAuxiliaryExecutable: "bloom-scan")?.path else {
             errorMessage = "The bloom-scan helper is missing from the app bundle."
             return

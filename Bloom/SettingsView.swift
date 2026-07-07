@@ -3,12 +3,30 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var prefs = Prefs.shared
     @State private var fullDiskAccess = false
+    @State private var helperActive = false
+    @State private var helperMessage: String?
 
     var body: some View {
         Form {
             Section {
                 Toggle("Scan as administrator", isOn: $prefs.adminScan)
-                Text("Runs scans with root privileges so folders owned by other users and the system are included. macOS asks for your password once per scan.")
+                Text("Runs scans with root privileges so folders owned by other users and the system are included.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LabeledContent("Background helper") {
+                    if helperActive {
+                        Label("Active", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Button("Enable…") {
+                            helperMessage = HelperManager.shared.enable()
+                            helperActive = HelperManager.shared.isActive
+                        }
+                    }
+                }
+                Text(helperActive
+                    ? "Administrator scans run through the approved helper — no password prompts."
+                    : helperMessage ?? "One-time approval in System Settings lets administrator scans run without a password prompt each time. Without it, macOS asks for your password once per scan.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -34,6 +52,10 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { fullDiskAccess = prefs.hasFullDiskAccess }
+        .onAppear {
+            fullDiskAccess = prefs.hasFullDiskAccess
+            HelperManager.shared.refresh()
+            helperActive = HelperManager.shared.isActive
+        }
     }
 }

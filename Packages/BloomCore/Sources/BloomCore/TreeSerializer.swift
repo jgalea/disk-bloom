@@ -18,7 +18,12 @@ public enum TreeSerializer {
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let handle = try FileHandle(forWritingTo: url)
         defer { try? handle.close() }
+        try write(root: root, skipped: skipped, to: handle)
+    }
 
+    /// Stream the tree into an already-open handle (e.g. a descriptor passed
+    /// over XPC from the app to the privileged helper).
+    public static func write(root: FileNode, skipped: Int, to handle: FileHandle) throws {
         var buffer = Data(capacity: 4 << 20)
         buffer.append(contentsOf: magic)
         appendString32(root.path, to: &buffer)
