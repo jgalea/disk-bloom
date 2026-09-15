@@ -1,35 +1,24 @@
-<div align="center">
-
 # Disk Bloom
 
-[![License](https://img.shields.io/badge/LICENSE-MIT-5C9E31?style=for-the-badge)](LICENSE)
-[![Built by](https://img.shields.io/badge/BUILT%20BY-JEAN%20GALEA-8A2BE2?style=for-the-badge)](https://jeangalea.com)
+macOS disk space visualizer — a free alternative to DaisyDisk, GrandPerspective, Disk Inventory X, OmniDiskSweeper, and cross-platform tools like SquirrelDisk, WinDirStat and WizTree.
 
-**A free, native macOS disk space visualizer — see where your space went, then clean it up safely.**
+Pick a volume or folder, get a fast concurrent scan, then explore an interactive sunburst: hover for size/percent, click a segment to zoom in, click the center to go back up, right-click to reveal in Finder or move to Trash (never hard-deletes).
 
-</div>
+The scanner counts what's actually on disk: hardlinked files count once (du semantics), firmlinked directories aren't double-counted, symlinks are never followed, and scans stay on one volume. A whole-disk total matches `df`.
 
-![Disk Bloom scanning a folder](assets/screenshot.png)
+## Reclaim
 
-Disk Bloom is a free alternative to DaisyDisk, GrandPerspective, Disk Inventory X and OmniDiskSweeper, and to cross-platform tools like SquirrelDisk, WinDirStat and WizTree.
+A size chart can tell you a folder is 74 GB. It can't tell you what that folder is or what to do about it, and for tool-owned directories "select and trash" is usually the wrong answer. The Reclaim panel (⇧⌘R) adds three things the chart can't show on its own:
 
-Pick a volume or folder, get a fast concurrent scan, then explore an interactive sunburst: hover for size and percentage, click a segment to zoom in (with animated transitions), click the center to go back up, press space to Quick Look a file, and right-click to reveal in Finder, collect for batch deletion, or move to Trash. It never hard-deletes anything.
+Known owners. Xcode DerivedData, simulator runtimes, npm and Homebrew caches, `node_modules`, Docker and OrbStack disk images, and others are recognized by path. Each one says what owns it, whether it regenerates by itself or needs checking first, and the correct reclaim step. For a Docker or OrbStack image that step is a command, since the space is inside the image and deleting the file destroys the tool.
 
-## Features
+Cold data. Every node carries its modification time, and a directory reports the newest one in its subtree, so a folder counts as untouched only when nothing inside it has been. Large things nothing has opened in months are listed separately from large things in daily use.
 
-- Sunburst chart with animated zoom, hover details and breadcrumbs
-- Scanner counts what's actually on disk: hardlinked files count once (du semantics), firmlinked directories aren't double-counted, symlinks are never followed, scans stay on one volume — a whole-disk total matches `df`
-- Fast: bulk directory enumeration (`getattrlistbulk`) with parallel traversal, faster than `du` on the same tree
-- Search the scanned tree, largest results first
-- Collector: stage files and folders from anywhere, review the total, move everything to Trash in one step
-- Quick Look previews before you delete
-- Purgeable space shown per volume
-- Multiple windows (⌘N), each with an independent scan
-- Administrator scan for folders your user can't read, and guided Full Disk Access setup for protected user data
+Held space. Local Time Machine snapshots pin the blocks of deleted files, so free space often doesn't move by as much as you just deleted. The panel says how many snapshots are holding blocks and how much is purgeable.
 
-## Requirements
+## Exclusions
 
-macOS 14 or later. Building needs Xcode and [xcodegen](https://github.com/yonaskolb/XcodeGen).
+Settings takes a list of folders the scanner never descends into. An excluded tree is never opened, costs nothing to skip, and contributes nothing to any parent's total. Useful for an rsync `--link-dest` mirror or any folder whose size you've already decided about.
 
 ## Build
 
@@ -38,19 +27,19 @@ xcodegen
 xcodebuild -project Bloom.xcodeproj -scheme Bloom -configuration Release build
 ```
 
-The app lands in `build/` (or your derived data path) as `Disk Bloom.app`. Engine tests: `cd Packages/BloomCore && swift test`.
+Engine tests: `cd Packages/BloomCore && swift test`
 
 ## Privileged scanning
 
-- "Scan as administrator" runs scans as root. Enable the background helper in the app's Settings (a one-time approval under System Settings → Login Items) and admin scans run through an SMAppService daemon over XPC with no password prompts; the daemon only accepts connections from binaries signed by the same team. Without the helper, the app falls back to a password prompt per scan.
-- For everyday scans, grant the app Full Disk Access (System Settings → Privacy & Security). That's what stops macOS's per-folder permission pop-ups; the welcome screen offers it when not granted.
+- "Scan as administrator" (welcome screen or Settings) runs the embedded `bloom-scan` helper with admin privileges — one password prompt per scan. The helper scans with the same engine and hands the tree back via a serialized temp file.
+- For everyday scans, grant the app Full Disk Access (System Settings → Privacy & Security) — the welcome screen offers this when not granted. That's what stops macOS's per-folder permission pop-ups.
 
 ## Debug flags
 
-Useful for testing and screenshots:
-
 - `--autoscan <dir>` — skip the welcome screen and scan a path
-- `--autofocus <child>` / `--autotrash <child>` / `--autocollect <child>` / `--autosearch <query>` — drive the UI
+- `--autofocus <child>` / `--autotrash <child>` — drive zoom/trash for screenshot testing
 - `--report <path>` — write the scanned tree as text and exit
 - `--snapshot <dir> --out <png>` — render a chart offscreen to PNG
+- `--uishot <png>` — capture the app window to PNG
+- `--autoinsights` — open the Reclaim panel after a scan, for screenshot testing
 - `--icon <png>` — render the app icon artwork

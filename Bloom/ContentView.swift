@@ -75,6 +75,19 @@ struct ContentView: View {
                 .keyboardShortcut(.upArrow, modifiers: .command)
                 .help("Go to enclosing folder (⌘↑)")
             }
+            ToolbarItem {
+                Button {
+                    model.showInsights = true
+                } label: {
+                    Label("Reclaim", systemImage: "lightbulb")
+                }
+                .disabled(!model.hasInsights)
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .help("What these folders are, and how to reclaim them (⇧⌘R)")
+            }
+        }
+        .sheet(isPresented: $model.showInsights) {
+            InsightsView(model: model)
         }
         .confirmationDialog(
             "Move \(model.collector.count) items (\(formatBytes(model.collectorSize))) to the Trash?",

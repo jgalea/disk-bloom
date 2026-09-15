@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -31,6 +32,10 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Excluded from scans") {
+                ExclusionsEditor(prefs: prefs)
+            }
+
             Section {
                 LabeledContent("Full Disk Access") {
                     if fullDiskAccess {
@@ -57,5 +62,51 @@ struct SettingsView: View {
             HelperManager.shared.refresh()
             helperActive = HelperManager.shared.isActive
         }
+    }
+}
+
+/// Folders the scanner skips entirely. An excluded tree is never opened, so
+/// it costs nothing and contributes nothing to any parent's size.
+private struct ExclusionsEditor: View {
+    @Bindable var prefs: Prefs
+    @State private var selection: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if prefs.exclusions.isEmpty {
+                Text("Nothing is excluded. Add a folder to keep it out of every scan, such as a backup mirror whose size you have already decided about.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                List(selection: $selection) {
+                    ForEach(prefs.exclusions, id: \.self) { path in
+                        Text(path)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .frame(height: 96)
+                .border(.quaternary)
+            }
+            HStack {
+                Button("Add Folder…") { choose() }
+                Button("Remove") {
+                    prefs.removeExclusions(selection)
+                    selection.removeAll()
+                }
+                .disabled(selection.isEmpty)
+            }
+        }
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls { prefs.addExclusion(url.path) }
     }
 }

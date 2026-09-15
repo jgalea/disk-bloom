@@ -1,4 +1,5 @@
 import AppKit
+import BloomCore
 import Observation
 import SwiftUI
 
@@ -11,6 +12,23 @@ final class Prefs {
 
     var adminScan: Bool = UserDefaults.standard.bool(forKey: "adminScan") {
         didSet { UserDefaults.standard.set(adminScan, forKey: "adminScan") }
+    }
+
+    /// Paths the scanner never descends into. Stored as written so the
+    /// Settings list shows what was typed, normalized only at scan time.
+    var exclusions: [String] = UserDefaults.standard.stringArray(forKey: "exclusions") ?? [] {
+        didSet { UserDefaults.standard.set(exclusions, forKey: "exclusions") }
+    }
+
+    var exclusionSet: Exclusions { Exclusions(paths: exclusions) }
+
+    func addExclusion(_ path: String) {
+        guard let normalized = Exclusions.normalize(path), !exclusions.contains(normalized) else { return }
+        exclusions.append(normalized)
+    }
+
+    func removeExclusions(_ paths: Set<String>) {
+        exclusions.removeAll { paths.contains($0) }
     }
 
     /// Full Disk Access makes macOS stop showing per-folder privacy prompts

@@ -5,11 +5,13 @@ public struct ScanSnapshot: Sendable {
     public var items: Int
     public var bytes: Int64
     public var skipped: Int
+    public var excluded: Int
 
-    public init(items: Int = 0, bytes: Int64 = 0, skipped: Int = 0) {
+    public init(items: Int = 0, bytes: Int64 = 0, skipped: Int = 0, excluded: Int = 0) {
         self.items = items
         self.bytes = bytes
         self.skipped = skipped
+        self.excluded = excluded
     }
 }
 
@@ -28,6 +30,10 @@ public final class ScanProgress: Sendable {
 
     func addSkipped() {
         state.withLock { $0.skipped += 1 }
+    }
+
+    func addExcluded() {
+        state.withLock { $0.excluded += 1 }
     }
 
     public var snapshot: ScanSnapshot {
@@ -89,7 +95,7 @@ public enum DiskScanner {
     /// Enumeration uses getattrlistbulk: one syscall returns a batch of
     /// entries with name, type, inode, link count, and allocated size —
     /// several times faster on a cold cache than readdir + per-entry stat.
-    public static func scan(url: URL, progress: ScanProgress) async -> FileNode {
+    public static func scan(url: URL, progress: ScanProgress, exclusions: Exclusions = .none) async -> FileNode {
         let path = (url.path as NSString).standardizingPath
         let name = url.lastPathComponent.isEmpty ? path : url.lastPathComponent
 
@@ -108,34 +114,41 @@ public enum DiskScanner {
         }
         var st = stat()
         var rootDevice: UInt64?
+        var rootModified: Int64 = 0
         let visited = VisitedInodes()
         if fstat(fd, &st) == 0 {
             let devino = DevIno(dev: UInt64(bitPattern: Int64(st.st_dev)), ino: st.st_ino)
             rootDevice = devino.dev
+            rootModified = Int64(st.st_mtimespec.tv_sec)
             _ = visited.claim(devino)
         }
         let budget = ParallelBudget(limit: max(4, ProcessInfo.processInfo.activeProcessorCount * 2))
 
         let node = await scanDirectory(
-            fd: fd, name: name,
-            rootDevice: rootDevice, visited: visited, progress: progress, budget: budget
+            fd: fd, name: name, path: path, ownModified: rootModified,
+            rootDevice: rootDevice, visited: visited, progress: progress,
+            budget: budget, exclusions: exclusions
         )
         // Rebuild the root so it carries its absolute path for the UI.
-        return FileNode(name: name, isDirectory: true, size: 0, children: node.children, rootPath: path)
+        return FileNode(
+            name: name, isDirectory: true, size: 0, modified: node.modified,
+            children: node.children, rootPath: path
+        )
     }
 
     /// Takes ownership of `fd` and closes it before returning.
     private static func scanDirectory(
-        fd: Int32, name: String, rootDevice: UInt64?,
-        visited: VisitedInodes, progress: ScanProgress, budget: ParallelBudget
+        fd: Int32, name: String, path: String, ownModified: Int64, rootDevice: UInt64?,
+        visited: VisitedInodes, progress: ScanProgress, budget: ParallelBudget,
+        exclusions: Exclusions
     ) async -> FileNode {
         var leaves: [FileNode] = []
-        var subdirs: [String] = []
+        var subdirs: [(name: String, modified: Int64)] = []
         var localBytes: Int64 = 0
 
         var attrs = attrlist()
         attrs.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
-        attrs.commonattr = ATTR_CMN_RETURNED_ATTRS | attrgroup_t(ATTR_CMN_NAME) | attrgroup_t(ATTR_CMN_OBJTYPE) | attrgroup_t(ATTR_CMN_FILEID)
+        attrs.commonattr = ATTR_CMN_RETURNED_ATTRS | attrgroup_t(ATTR_CMN_NAME) | attrgroup_t(ATTR_CMN_OBJTYPE) | attrgroup_t(ATTR_CMN_MODTIME) | attrgroup_t(ATTR_CMN_FILEID)
         attrs.fileattr = attrgroup_t(ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE)
 
         let bufferSize = 128 * 1024
@@ -168,6 +181,13 @@ public enum DiskScanner {
                     objType = field.load(as: UInt32.self)
                     field += MemoryLayout<UInt32>.size
                 }
+                // Attributes arrive in bitmap order, so MODTIME (0x400) is
+                // unpacked after OBJTYPE (0x08) and before FILEID (0x2000000).
+                var modified: Int64 = 0
+                if returned.commonattr & attrgroup_t(ATTR_CMN_MODTIME) != 0 {
+                    modified = Int64(field.loadUnaligned(as: timespec.self).tv_sec)
+                    field += MemoryLayout<timespec>.size
+                }
                 var fileID: UInt64 = 0
                 if returned.commonattr & attrgroup_t(ATTR_CMN_FILEID) != 0 {
                     fileID = field.loadUnaligned(as: UInt64.self)
@@ -185,14 +205,16 @@ public enum DiskScanner {
                 guard !entryName.isEmpty else { continue }
 
                 if objType == VDIR {
-                    subdirs.append(entryName)
+                    subdirs.append((entryName, modified))
                 } else {
                     if objType == VREG, linkCount > 1, let rootDevice {
                         // Hardlink: count the first sighting only (du semantics).
                         if !visited.claim(DevIno(dev: rootDevice, ino: fileID)) { continue }
                     }
                     localBytes += allocated
-                    leaves.append(FileNode(name: entryName, isDirectory: false, size: allocated))
+                    leaves.append(FileNode(
+                        name: entryName, isDirectory: false, size: allocated, modified: modified
+                    ))
                 }
             }
         }
@@ -200,7 +222,7 @@ public enum DiskScanner {
 
         if subdirs.isEmpty {
             close(fd)
-            return FileNode(name: name, isDirectory: true, size: 0, children: leaves)
+            return FileNode(name: name, isDirectory: true, size: 0, modified: ownModified, children: leaves)
         }
 
         // Open + identity-check each subdirectory relative to this fd.
@@ -227,23 +249,31 @@ public enum DiskScanner {
         // chains stay cheap. Skipped/duplicate dirs still appear as empty
         // nodes so permission problems are visible in the UI.
         var children = leaves
-        var spawn: [(String, Int32)] = []
-        var inline: [(String, Int32)] = []
+        var spawn: [(name: String, fd: Int32, path: String, modified: Int64)] = []
+        var inline: [(name: String, fd: Int32, path: String, modified: Int64)] = []
         for sub in subdirs {
-            guard let childFD = openSubdirectory(sub) else {
-                children.append(FileNode(name: sub, isDirectory: true, size: 0))
+            let childPath = path == "/" ? "/" + sub.name : path + "/" + sub.name
+            // Excluded trees are not opened, not counted, and not shown.
+            if exclusions.excludes(childPath) {
+                progress.addExcluded()
                 continue
             }
-            if budget.tryAcquire() { spawn.append((sub, childFD)) } else { inline.append((sub, childFD)) }
+            guard let childFD = openSubdirectory(sub.name) else {
+                children.append(FileNode(name: sub.name, isDirectory: true, size: 0, modified: sub.modified))
+                continue
+            }
+            let entry = (name: sub.name, fd: childFD, path: childPath, modified: sub.modified)
+            if budget.tryAcquire() { spawn.append(entry) } else { inline.append(entry) }
         }
         close(fd)
 
         let spawned = await withTaskGroup(of: FileNode.self) { group in
-            for (sub, childFD) in spawn {
+            for entry in spawn {
                 group.addTask {
                     let node = await scanDirectory(
-                        fd: childFD, name: sub,
-                        rootDevice: rootDevice, visited: visited, progress: progress, budget: budget
+                        fd: entry.fd, name: entry.name, path: entry.path, ownModified: entry.modified,
+                        rootDevice: rootDevice, visited: visited, progress: progress,
+                        budget: budget, exclusions: exclusions
                     )
                     budget.release()
                     return node
@@ -251,17 +281,18 @@ public enum DiskScanner {
             }
             // Inline recursion overlaps with the spawned tasks.
             var result: [FileNode] = []
-            for (sub, childFD) in inline {
+            for entry in inline {
                 result.append(await scanDirectory(
-                    fd: childFD, name: sub,
-                    rootDevice: rootDevice, visited: visited, progress: progress, budget: budget
+                    fd: entry.fd, name: entry.name, path: entry.path, ownModified: entry.modified,
+                    rootDevice: rootDevice, visited: visited, progress: progress,
+                    budget: budget, exclusions: exclusions
                 ))
             }
             for await node in group { result.append(node) }
             return result
         }
         children.append(contentsOf: spawned)
-        return FileNode(name: name, isDirectory: true, size: 0, children: children)
+        return FileNode(name: name, isDirectory: true, size: 0, modified: ownModified, children: children)
     }
 
     struct Identity {

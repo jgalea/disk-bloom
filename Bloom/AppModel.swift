@@ -46,6 +46,10 @@ final class AppModel {
         didSet { scheduleSearch() }
     }
     var searchResults: [FileNode] = []
+    var advice: [(node: FileNode, advice: Advice)] = []
+    var staleNodes: [FileNode] = []
+    var volumeInsight: VolumeInsight?
+    var showInsights = false
 
     private var scanProgress: ScanProgress?
     private var searchTask: Task<Void, Never>?
@@ -102,6 +106,7 @@ final class AppModel {
         progress = ScanSnapshot(items: 0, bytes: 0, skipped: 0)
         let scanProgress = ScanProgress()
         self.scanProgress = scanProgress
+        let exclusions = Prefs.shared.exclusionSet
 
         Task { [weak self] in
             while self?.phase == .scanning {
@@ -110,7 +115,7 @@ final class AppModel {
             }
         }
         Task.detached(priority: .userInitiated) {
-            let tree = await DiskScanner.scan(url: url, progress: scanProgress)
+            let tree = await DiskScanner.scan(url: url, progress: scanProgress, exclusions: exclusions)
             await MainActor.run { [weak self] in
                 self?.finishScan(tree: tree, skipped: scanProgress.snapshot.skipped)
             }
@@ -277,7 +282,26 @@ final class AppModel {
         setFocus(tree)
         transition = nil
         phase = .ready
+        computeInsights(tree: tree)
         runDebugActions()
+    }
+
+    /// Cross the finished tree with what is known about tool-owned
+    /// directories and with how long things have sat untouched. Both walks
+    /// are cheap next to the scan itself, so they run eagerly rather than
+    /// when the panel opens.
+    private func computeInsights(tree: FileNode) {
+        advice = Advisor.advise(tree: tree)
+        staleNodes = StaleFinder.stale(tree: tree)
+        let volume = URL(fileURLWithPath: tree.path)
+        Task.detached(priority: .utility) {
+            let insight = VolumeInsight.measure(volume: volume)
+            await MainActor.run { [weak self] in self?.volumeInsight = insight }
+        }
+    }
+
+    var hasInsights: Bool {
+        !advice.isEmpty || !staleNodes.isEmpty || (volumeInsight?.holdsSpaceBack ?? false)
     }
 
     func setFocus(_ node: FileNode) {
@@ -427,6 +451,14 @@ final class AppModel {
     /// text and exits.
     private func runDebugActions() {
         let args = CommandLine.arguments
+        // Screenshot hook: the Reclaim panel cannot be opened by a synthetic
+        // click, so verification opens it by flag instead.
+        if args.contains("--autoinsights") {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                self.showInsights = true
+            }
+        }
         if let index = args.firstIndex(of: "--autofocus"), args.count > index + 1,
            let child = root?.children.first(where: { $0.name == args[index + 1] }) {
             setFocus(child)

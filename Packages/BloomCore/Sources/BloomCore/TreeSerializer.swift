@@ -3,16 +3,20 @@ import Foundation
 /// Compact binary format for shipping a scanned tree between the privileged
 /// helper and the app. Preorder walk; little-endian.
 ///
-/// Header: "BLM1" + u32 rootPathLength + rootPath + u32 skipped
-/// Node:   u8 isDirectory + u16 nameLength + name(UTF-8)
+/// Header: "BLM2" + u32 rootPathLength + rootPath + u32 skipped
+/// Node:   u8 isDirectory + u16 nameLength + name(UTF-8) + s64 modified
 ///         + (file: s64 size) | (directory: u32 childCount, then children)
+///
+/// BLM1 is the same without the modified field; it still reads, with every
+/// node reporting an unknown (0) mtime.
 public enum TreeSerializer {
     public enum SerializerError: Error {
         case malformed
         case unsupportedVersion
     }
 
-    private static let magic = Array("BLM1".utf8)
+    private static let magic = Array("BLM2".utf8)
+    private static let legacyMagic = Array("BLM1".utf8)
 
     public static func write(root: FileNode, skipped: Int, to url: URL) throws {
         FileManager.default.createFile(atPath: url.path, contents: nil)
@@ -33,6 +37,7 @@ public enum TreeSerializer {
         while let node = stack.popLast() {
             buffer.append(node.isDirectory ? 1 : 0)
             appendString16(node.name, to: &buffer)
+            appendInteger(UInt64(bitPattern: node.modified), to: &buffer)
             if node.isDirectory {
                 appendInteger(UInt32(node.children.count), to: &buffer)
                 stack.append(contentsOf: node.children.reversed())
@@ -51,34 +56,50 @@ public enum TreeSerializer {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         var offset = 0
 
-        guard data.count > magic.count + 8, Array(data.prefix(magic.count)) == magic else {
+        let prefix = Array(data.prefix(magic.count))
+        let hasModified: Bool
+        if prefix == magic {
+            hasModified = true
+        } else if prefix == legacyMagic {
+            hasModified = false
+        } else {
             throw SerializerError.unsupportedVersion
         }
+        guard data.count > magic.count + 8 else { throw SerializerError.unsupportedVersion }
         offset = magic.count
         let rootPath = try readString(data, &offset, lengthBytes: 4)
         let skipped = Int(try readInteger(data, &offset, as: UInt32.self))
 
-        let root = try readNode(data, &offset, rootPath: rootPath)
+        let root = try readNode(data, &offset, rootPath: rootPath, hasModified: hasModified)
         guard root.isDirectory else { throw SerializerError.malformed }
         return (root, skipped)
     }
 
     // MARK: - Node reading (explicit stack; tree depth is filesystem depth)
 
-    private static func readNode(_ data: Data, _ offset: inout Int, rootPath: String?) throws -> FileNode {
+    private static func readNode(
+        _ data: Data, _ offset: inout Int, rootPath: String?, hasModified: Bool
+    ) throws -> FileNode {
         let isDirectory = try readInteger(data, &offset, as: UInt8.self) == 1
         let name = try readString(data, &offset, lengthBytes: 2)
+        var modified: Int64 = 0
+        if hasModified {
+            modified = Int64(bitPattern: try readInteger(data, &offset, as: UInt64.self))
+        }
         if !isDirectory {
             let size = Int64(bitPattern: try readInteger(data, &offset, as: UInt64.self))
-            return FileNode(name: name, isDirectory: false, size: size)
+            return FileNode(name: name, isDirectory: false, size: size, modified: modified)
         }
         let childCount = Int(try readInteger(data, &offset, as: UInt32.self))
         var children: [FileNode] = []
         children.reserveCapacity(childCount)
         for _ in 0..<childCount {
-            children.append(try readNode(data, &offset, rootPath: nil))
+            children.append(try readNode(data, &offset, rootPath: nil, hasModified: hasModified))
         }
-        return FileNode(name: name, isDirectory: true, size: 0, children: children, rootPath: rootPath)
+        return FileNode(
+            name: name, isDirectory: true, size: 0, modified: modified,
+            children: children, rootPath: rootPath
+        )
     }
 
     // MARK: - Primitives
