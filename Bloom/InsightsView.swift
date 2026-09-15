@@ -44,7 +44,7 @@ struct InsightsView: View {
                 emptyState
             }
         }
-        .frame(width: 620, height: 520)
+        .frame(width: 620, height: 600)
     }
 
     private var header: some View {

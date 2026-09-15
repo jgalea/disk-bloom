@@ -4,9 +4,13 @@ macOS disk space visualizer — a free alternative to DaisyDisk, GrandPerspectiv
 
 Pick a volume or folder, get a fast concurrent scan, then explore an interactive sunburst: hover for size/percent, click a segment to zoom in, click the center to go back up, right-click to reveal in Finder or move to Trash (never hard-deletes).
 
+![Disk Bloom scanning a folder](assets/screenshot.png)
+
 The scanner counts what's actually on disk: hardlinked files count once (du semantics), firmlinked directories aren't double-counted, symlinks are never followed, and scans stay on one volume. A whole-disk total matches `df`.
 
 ## Reclaim
+
+![The Reclaim panel](assets/reclaim.png)
 
 A size chart can tell you a folder is 74 GB. It can't tell you what that folder is or what to do about it, and for tool-owned directories "select and trash" is usually the wrong answer. The Reclaim panel (⇧⌘R) adds three things the chart can't show on its own:
 
