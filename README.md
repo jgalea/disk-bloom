@@ -1,6 +1,16 @@
+<div align="center">
+
 # Disk Bloom
 
-macOS disk space visualizer — a free alternative to DaisyDisk, GrandPerspective, Disk Inventory X, OmniDiskSweeper, and cross-platform tools like SquirrelDisk, WinDirStat and WizTree.
+[![Download](https://img.shields.io/badge/DOWNLOAD-v1.1.0-0A84FF?style=for-the-badge)](https://github.com/jgalea/disk-bloom/releases/latest)
+[![License](https://img.shields.io/badge/LICENSE-MIT-5C9E31?style=for-the-badge)](LICENSE)
+[![Built by](https://img.shields.io/badge/BUILT%20BY-JEAN%20GALEA-8A2BE2?style=for-the-badge)](https://jeangalea.com)
+
+**A free, native macOS disk space visualizer that tells you what a folder is, not just how big it is.**
+
+</div>
+
+macOS disk space visualizer, a free alternative to DaisyDisk, GrandPerspective, Disk Inventory X, OmniDiskSweeper, and cross-platform tools like SquirrelDisk, WinDirStat and WizTree.
 
 Pick a volume or folder, get a fast concurrent scan, then explore an interactive sunburst: hover for size/percent, click a segment to zoom in, click the center to go back up, right-click to reveal in Finder or move to Trash (never hard-deletes).
 
@@ -24,6 +34,12 @@ Held space. Local Time Machine snapshots pin the blocks of deleted files, so fre
 
 Settings takes a list of folders the scanner never descends into. An excluded tree is never opened, costs nothing to skip, and contributes nothing to any parent's total. Useful for an rsync `--link-dest` mirror or any folder whose size you've already decided about.
 
+## Install
+
+Download the latest release, unzip it, and drag Disk Bloom to Applications. It's signed with a Developer ID certificate and notarized by Apple, so it opens on a double-click with no warning and no right-click-open dance.
+
+Requires macOS 14 or later.
+
 ## Build
 
 ```
@@ -35,15 +51,15 @@ Engine tests: `cd Packages/BloomCore && swift test`
 
 ## Privileged scanning
 
-- "Scan as administrator" (welcome screen or Settings) runs the embedded `bloom-scan` helper with admin privileges — one password prompt per scan. The helper scans with the same engine and hands the tree back via a serialized temp file.
-- For everyday scans, grant the app Full Disk Access (System Settings → Privacy & Security) — the welcome screen offers this when not granted. That's what stops macOS's per-folder permission pop-ups.
+- "Scan as administrator" (welcome screen or Settings) runs the embedded `bloom-scan` helper with admin privileges, one password prompt per scan. The helper scans with the same engine and hands the tree back via a serialized temp file.
+- For everyday scans, grant the app Full Disk Access (System Settings → Privacy & Security). The welcome screen offers this when not granted. That's what stops macOS's per-folder permission pop-ups.
 
 ## Debug flags
 
-- `--autoscan <dir>` — skip the welcome screen and scan a path
-- `--autofocus <child>` / `--autotrash <child>` — drive zoom/trash for screenshot testing
-- `--report <path>` — write the scanned tree as text and exit
-- `--snapshot <dir> --out <png>` — render a chart offscreen to PNG
-- `--uishot <png>` — capture the app window to PNG
-- `--autoinsights` — open the Reclaim panel after a scan, for screenshot testing
-- `--icon <png>` — render the app icon artwork
+- `--autoscan <dir>`: skip the welcome screen and scan a path
+- `--autofocus <child>` / `--autotrash <child>`: drive zoom/trash for screenshot testing
+- `--report <path>`: write the scanned tree as text and exit
+- `--snapshot <dir> --out <png>`: render a chart offscreen to PNG
+- `--uishot <png>`: capture the app window to PNG
+- `--autoinsights`: open the Reclaim panel after a scan, for screenshot testing
+- `--icon <png>`: render the app icon artwork
